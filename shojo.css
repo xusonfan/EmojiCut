@@ -48,6 +48,14 @@ select {
     padding: 16px 24px 30px;
     margin-bottom: 20px;
     flex-shrink: 0;
+    transition: all 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.cute-machine-static.retracted {
+    transform: translateY(-150%) scale(0.8);
+    opacity: 0;
+    margin-bottom: -180px; /* Collapse the space */
+    pointer-events: none;
 }
 
 /* Sticker Output Area - Below the printer */

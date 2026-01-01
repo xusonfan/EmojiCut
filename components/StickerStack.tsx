@@ -5,24 +5,29 @@ import { Download, X } from 'lucide-react';
 interface StickerStackProps {
     stickers: StickerSegment[];
     visible: boolean;
+    isSpread?: boolean;
 }
 
-const StickerStack: React.FC<StickerStackProps> = ({ stickers, visible }) => {
+const StickerStack: React.FC<StickerStackProps> = ({ stickers, visible, isSpread = false }) => {
     if (!visible || stickers.length === 0) return null;
 
     return (
         <div className="absolute bottom-0 left-0 right-0 top-0 pointer-events-none z-10 flex items-center justify-center">
-            {/* This container aligns with the printer's output in 2D space naturally 
-           because the printer is centered. The 'stack' will appear to spill out.
-           We need to offset it to match the visual output slot of the isometric printer.
-        */}
-            <div className="relative translate-y-40 translate-x-0 w-full h-full max-w-4xl mx-auto pointer-events-auto">
+            {/* 
+               If isSpread is true, we remove the translation offset and let stickers flow in a grid 
+               (or their own spread positions). 
+               If isSpread is false, we keep the original pile behavior offset for the printer output.
+            */}
+            <div 
+                className={`relative w-full h-full max-w-4xl mx-auto pointer-events-auto transition-all duration-1000 ease-in-out ${isSpread ? 'translate-y-0' : 'translate-y-40'}`}
+            >
                 {stickers.map((sticker, index) => (
                     <DraggableSticker
                         key={sticker.id}
                         sticker={sticker}
                         index={index}
                         total={stickers.length}
+                        isSpread={isSpread}
                     />
                 ))}
             </div>
@@ -34,18 +39,36 @@ interface DraggableProps {
     sticker: StickerSegment;
     index: number;
     total: number;
+    isSpread: boolean;
 }
 
-const DraggableSticker: React.FC<DraggableProps> = ({ sticker, index, total }) => {
+const DraggableSticker: React.FC<DraggableProps> = ({ sticker, index, total, isSpread }) => {
     // Randomize initial spread slightly for that "pile" look
     const initialRotation = useRef(Math.random() * 30 - 15);
     const initialX = useRef(Math.random() * 40 - 20);
     const initialY = useRef(Math.random() * 40 - 20 + (index * 2)); // slight stacking effect
 
+    // Calculate grid position for spread view
+    const columns = 4;
+    const row = Math.floor(index / columns);
+    const col = index % columns;
+    const gridX = (col - 1.5) * 160; // 160px horizontal spacing
+    const gridY = (row - Math.floor(total / columns) / 2) * 160; // 160px vertical spacing
+
     const [position, setPosition] = useState({ x: initialX.current, y: initialY.current });
     const [isDragging, setIsDragging] = useState(false);
     const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
     const [isHovered, setIsHovered] = useState(false);
+
+    useEffect(() => {
+        if (isSpread && !isDragging) {
+            // Move to grid position
+            setPosition({ x: gridX, y: gridY });
+        } else if (!isSpread && !isDragging) {
+            // Move back to pile
+            setPosition({ x: initialX.current, y: initialY.current });
+        }
+    }, [isSpread, gridX, gridY, isDragging]);
 
     const handleMouseDown = (e: React.MouseEvent) => {
         setIsDragging(true);
@@ -93,8 +116,9 @@ const DraggableSticker: React.FC<DraggableProps> = ({ sticker, index, total }) =
         <div
             className="absolute left-1/2 top-1/2 cursor-grab active:cursor-grabbing transition-shadow duration-200"
             style={{
-                transform: `translate(${position.x}px, ${position.y}px) rotate(${initialRotation.current}deg) scale(${isDragging ? 1.1 : 1})`,
+                transform: `translate(${position.x}px, ${position.y}px) rotate(${isSpread ? 0 : initialRotation.current}deg) scale(${isDragging ? 1.1 : 1})`,
                 zIndex: isDragging ? 100 : index, // Bring to front when dragging
+                transition: isDragging ? 'none' : 'all 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)',
                 opacity: 0,
                 animation: `slideOut 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards`,
                 animationDelay: `${index * 0.1}s` // Stagger animation

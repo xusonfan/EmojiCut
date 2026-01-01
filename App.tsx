@@ -17,11 +17,13 @@ const App: React.FC = () => {
   const [originalImageEl, setOriginalImageEl] = useState<HTMLImageElement | null>(null);
   const [isManualCropping, setIsManualCropping] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
+  const [isRetracted, setIsRetracted] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processFile = async (file: File) => {
     try {
       setAppMode('cut');
+      setIsRetracted(false); // Reset retraction state
       setStatus({ stage: 'analyzing_layout', progress: 10, message: '加载图片...' });
       setSegments([]);
 
@@ -87,6 +89,11 @@ const App: React.FC = () => {
     }
 
     setStatus({ stage: 'complete', progress: 100, message: '完成!' });
+
+    // Trigger retraction and spread after a short delay
+    setTimeout(() => {
+      setIsRetracted(true);
+    }, 1000);
   };
 
   const handleManualCrop = (rect: Rect) => {
@@ -203,7 +210,7 @@ const App: React.FC = () => {
           )}
 
           {/* Static Printer Display - Stickers fall from here */}
-          <div className="cute-machine cute-machine-static">
+          <div className={`cute-machine cute-machine-static ${isRetracted ? 'retracted' : ''}`}>
             <div className="w-full flex justify-center items-center gap-2 mb-2 opacity-80">
               <div className="w-2 h-2 rounded-full bg-pink-400"></div>
               <div className="text-pink-400 font-bold tracking-widest text-xs">✨ NANO BANANA PRO ✨</div>
@@ -224,7 +231,11 @@ const App: React.FC = () => {
 
           {/* The output stack - Stickers spill out below the printer */}
           <div className="sticker-output-area">
-            <StickerStack stickers={segments} visible={segments.length > 0} />
+            <StickerStack 
+              stickers={segments} 
+              visible={segments.length > 0} 
+              isSpread={isRetracted}
+            />
           </div>
 
           {/* Processing State Indicator */}

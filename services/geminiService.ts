@@ -1,13 +1,77 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const getAiClient = () => {
-  const apiKey = process.env.API_KEY;
+const getApiConfig = (type: 'image' | 'text' = 'image') => {
+  // 优先级：专用 Key > 通用 Key
+  let apiKey = process.env.API_KEY;
+  if (type === 'image' && process.env.API_KEY_IMAGE) {
+    apiKey = process.env.API_KEY_IMAGE;
+  } else if (type === 'text' && process.env.API_KEY_TEXT) {
+    apiKey = process.env.API_KEY_TEXT;
+  }
+
+  // 优先级：专用 BaseUrl > 通用 BaseUrl > 默认 Google 地址
+  let baseUrl = process.env.API_BASE_URL || "https://generativelanguage.googleapis.com";
+  
+  if (type === 'image' && process.env.API_BASE_URL_IMAGE) {
+    baseUrl = process.env.API_BASE_URL_IMAGE;
+  } else if (type === 'text' && process.env.API_BASE_URL_TEXT) {
+    baseUrl = process.env.API_BASE_URL_TEXT;
+  }
+
+  // 移除末尾的斜杠
+  baseUrl = baseUrl.replace(/\/$/, "");
+
   if (!apiKey) {
-    console.warn("API_KEY is not set. Skipping AI features.");
+    console.warn(`API_KEY for ${type} is not set. Skipping AI features.`);
     return null;
   }
-  return new GoogleGenAI({ apiKey });
+
+  return { apiKey, baseUrl };
 };
+
+// 通用 Fetch 请求函数
+const callGeminiApi = async (model: string, contents: any, config?: any, type: 'image' | 'text' = 'image') => {
+  const apiConfig = getApiConfig(type);
+  if (!apiConfig) throw new Error(`API_KEY for ${type} is not set`);
+
+  const url = `${apiConfig.baseUrl}/v1beta/models/${model}:generateContent?key=${apiConfig.apiKey}`;
+  
+  // 确保 contents 始终是数组格式
+  const requestBody = {
+    contents: Array.isArray(contents.contents) ? contents.contents : 
+              (Array.isArray(contents) ? contents : [contents]),
+    generationConfig: config
+  };
+
+  // 某些中转服务（如 OneAPI）严格校验 contents 结构
+  // 如果之前传递的是 { parts: [...] }，这里需要包一层 { role: "user", parts: [...] }
+  if (requestBody.contents.length > 0 && !requestBody.contents[0].role) {
+    requestBody.contents = requestBody.contents.map((item: any) => ({
+      role: "user",
+      parts: item.parts || item
+    }));
+  }
+
+  // Debug Log
+  console.log(`🚀 Calling Gemini API (${type}):`, url);
+  console.log("📦 Request Body:", JSON.stringify(requestBody, null, 2));
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Gemini API Error (${response.status}): ${errorText}`);
+  }
+
+  return await response.json();
+};
+
 
 // ==================== Sticker Style Presets ====================
 
@@ -56,7 +120,8 @@ const buildStickerPrompt = (style: StickerStyle, customStyle?: string): string =
 
   const styleHint = `画面风格：${styleDescription}`;
 
-  return `${basePrompt}\n${styleHint}`;
+  return `${basePrompt}
+${styleHint}`;
 };
 
 /**
@@ -67,9 +132,6 @@ export const generateStickerSheet = async (
   style: StickerStyle,
   customStyle?: string
 ): Promise<string> => {
-  const ai = getAiClient();
-  if (!ai) throw new Error("API_KEY is not set");
-
   try {
     // Remove data:image/xxx;base64, prefix if present
     const cleanBase64 = referenceImage.includes(',')
@@ -77,10 +139,10 @@ export const generateStickerSheet = async (
       : referenceImage;
 
     const prompt = buildStickerPrompt(style, customStyle);
+    const model = process.env.MODEL_IMAGE || 'gemini-3-pro-image-preview';
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-image-preview',
-      contents: {
+    const response = await callGeminiApi(model, [
+      {
         parts: [
           {
             inlineData: {
@@ -93,7 +155,7 @@ export const generateStickerSheet = async (
           }
         ]
       }
-    });
+    ], undefined, 'image');
 
     // Extract the generated image from response
     if (response.candidates && response.candidates[0]?.content?.parts) {
@@ -105,7 +167,7 @@ export const generateStickerSheet = async (
       }
     }
 
-    throw new Error("No image returned from generation");
+    throw new Error("No image returned from generation: " + JSON.stringify(response));
 
   } catch (error) {
     console.error("Sticker Generation Error:", error);
@@ -116,16 +178,13 @@ export const generateStickerSheet = async (
 // ==================== Sticker Naming ====================
 
 export const generateStickerName = async (base64Image: string): Promise<string> => {
-  const ai = getAiClient();
-  if (!ai) return "sticker";
-
   try {
     // Remove data:image/png;base64, prefix
     const cleanBase64 = base64Image.split(',')[1];
+    const model = process.env.MODEL_TEXT || 'gemini-2.5-flash';
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: {
+    const response = await callGeminiApi(model, [
+      {
         parts: [
           {
             inlineData: {
@@ -137,20 +196,19 @@ export const generateStickerName = async (base64Image: string): Promise<string> 
             text: "Analyze this sticker. Return a JSON object with a 'filename' property containing a short, descriptive name (max 3 words) in English using snake_case. If there is text, try to capture the meaning or emotion. Example: 'sad_crying', 'thumbs_up', 'working_hard'."
           }
         ]
-      },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            filename: { type: Type.STRING }
-          }
+      }
+    ], {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          filename: { type: Type.STRING }
         }
       }
-    });
+    }, 'text');
 
-    if (response.text) {
-      const data = JSON.parse(response.text);
+    if (response.candidates && response.candidates[0]?.content?.parts && response.candidates[0].content.parts[0].text) {
+      const data = JSON.parse(response.candidates[0].content.parts[0].text);
       return data.filename || "sticker";
     }
     return "sticker";
